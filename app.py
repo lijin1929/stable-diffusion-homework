@@ -10,12 +10,23 @@ import torch
 import gradio as gr
 from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
 
-MODEL_DIR = os.environ.get("SD_MODEL_DIR", "webui_model")
+# 模型目录：优先环境变量 SD_MODEL_DIR；否则取脚本所在目录下的 webui_model。
+# 用绝对路径可保证在任意工作目录下运行都能找到本地模型（否则会被当成 HuggingFace 仓库名联网下载，报 401）
+MODEL_DIR = os.environ.get("SD_MODEL_DIR") or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "webui_model"
+)
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 # CPU 用 fp32（diffusers 0.12.1 不支持 fp16 CPU 推理）；需已安装 accelerate 以低内存方式加载
 DTYPE = torch.float16 if DEVICE == "cuda" else torch.float32
 PORT = int(os.environ.get("SD_PORT", "6006"))
 SHARE = os.environ.get("SD_SHARE", "1") == "1"
+
+if not os.path.isdir(MODEL_DIR):
+    raise SystemExit(
+        "[app] 找不到模型目录：%s\n"
+        "      请在包含 webui_model 的目录下运行，或指定绝对路径：\n"
+        "      SD_MODEL_DIR=/workspace/homework/webui_model python app.py" % MODEL_DIR
+    )
 
 print(f"[app] 加载模型 {MODEL_DIR}（设备: {DEVICE}）...")
 
