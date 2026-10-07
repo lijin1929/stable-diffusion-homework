@@ -12,9 +12,8 @@ from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
 
 MODEL_DIR = os.environ.get("SD_MODEL_DIR", "webui_model")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-# 统一使用 fp16 半精度：GPU 上更快，CPU 上内存减半（8GB 内存环境必需，fp32 会被 OOM 杀掉）
-# 如需强制 fp32，设置环境变量 SD_CPU_FP32=1（需 16GB 以上内存）
-DTYPE = torch.float32 if (DEVICE == "cpu" and os.environ.get("SD_CPU_FP32", "0") == "1") else torch.float16
+# CPU 用 fp32（diffusers 0.12.1 不支持 fp16 CPU 推理）；需已安装 accelerate 以低内存方式加载
+DTYPE = torch.float16 if DEVICE == "cuda" else torch.float32
 PORT = int(os.environ.get("SD_PORT", "6006"))
 SHARE = os.environ.get("SD_SHARE", "1") == "1"
 
@@ -54,6 +53,8 @@ img2img_pipe = StableDiffusionImg2ImgPipeline(
     tokenizer=pipe.tokenizer,
     unet=pipe.unet,
     scheduler=pipe.scheduler,
+    safety_checker=getattr(pipe, "safety_checker", None),
+    feature_extractor=getattr(pipe, "feature_extractor", None),
 )
 
 
