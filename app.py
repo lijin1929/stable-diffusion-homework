@@ -1,0 +1,105 @@
+# -*- coding: utf-8 -*-
+"""
+Stable Diffusion Web 界面（文生图 / 图生图）
+用法：python app.py  →  浏览器打开控制台打印的 gradio.live 链接
+依赖：diffusers==0.12.1  transformers==4.26.0  huggingface_hub==0.16.4  gradio==3.50.2
+模型：webui_model/ 目录（diffusers 格式，下载方式见《部署指南-课程算力平台.md》）
+"""
+import os
+import torch
+import gradio as gr
+from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
+
+MODEL_DIR = os.environ.get("SD_MODEL_DIR", "webui_model")
+DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DTYPE = torch.float16 if DEVICE == "cuda" else torch.float32
+PORT = int(os.environ.get("SD_PORT", "6006"))
+SHARE = os.environ.get("SD_SHARE", "1") == "1"
+
+print(f"[app] 加载模型 {MODEL_DIR}（设备: {DEVICE}）...")
+pipe = StableDiffusionPipeline.from_pretrained(MODEL_DIR, torch_dtype=DTYPE).to(DEVICE)
+
+# 使用 PLMS 采样器，与作业 txt2img.py 的 --plms 参数保持一致
+try:
+    from diffusers import PLMSScheduler
+    pipe.scheduler = PLMSScheduler.from_config(pipe.scheduler.config)
+    print("[app] 已切换采样器: PLMS")
+except Exception as e:
+    print("[app] 使用默认采样器（PNDM）:", e)
+
+# 复用组件构建图生图管线（同一套模型权重，不额外占用显存）
+img2img_pipe = StableDiffusionImg2ImgPipeline(
+    vae=pipe.vae,
+    text_encoder=pipe.text_encoder,
+    tokenizer=pipe.tokenizer,
+    unet=pipe.unet,
+    scheduler=pipe.scheduler,
+)
+
+
+def _generator(seed):
+    if seed is None or int(seed) < 0:
+        return None
+    return torch.Generator(device=DEVICE).manual_seed(int(seed))
+
+
+def txt2img_fn(prompt, negative_prompt, steps, scale, seed):
+    image = pipe(
+        prompt=prompt,
+        negative_prompt=negative_prompt or None,
+        num_inference_steps=int(steps),
+        guidance_scale=float(scale),
+        generator=_generator(seed),
+    ).images[0]
+    return image
+
+
+def img2img_fn(prompt, negative_prompt, init_image, steps, scale, strength, seed):
+    if init_image is None:
+        raise gr.Error("请先上传一张参考图（init image）")
+    image = img2img_pipe(
+        prompt=prompt,
+        negative_prompt=negative_prompt or None,
+        image=init_image,
+        num_inference_steps=int(steps),
+        guidance_scale=float(scale),
+        strength=float(strength),
+        generator=_generator(seed),
+    ).images[0]
+    return image
+
+
+with gr.Blocks(title="Stable Diffusion Web 界面") as demo:
+    gr.Markdown(
+        "# Stable Diffusion 文生图 / 图生图\n"
+        "文生图：直接通过文本提示词生成全新图像；"
+        "图生图：上传参考图 + 提示词调整，`strength` 越大改动越大。"
+    )
+    with gr.Tab("文生图 txt2img"):
+        with gr.Row():
+            with gr.Column():
+                t_prompt = gr.Textbox(label="提示词 Prompt", value="A landscape painting in the style of ink wash painting", lines=2)
+                t_neg = gr.Textbox(label="负向提示词（可空）", value="")
+                t_steps = gr.Slider(10, 100, value=50, step=1, label="扩散步数 Steps")
+                t_scale = gr.Slider(1.0, 20.0, value=9.0, step=0.5, label="提示词服从度 CFG Scale")
+                t_seed = gr.Number(value=-1, label="随机种子（-1 为随机）")
+                t_btn = gr.Button("生成", variant="primary")
+            t_out = gr.Image(label="生成结果")
+        t_btn.click(txt2img_fn, [t_prompt, t_neg, t_steps, t_scale, t_seed], t_out)
+
+    with gr.Tab("图生图 img2img"):
+        with gr.Row():
+            with gr.Column():
+                i_prompt = gr.Textbox(label="提示词 Prompt", value="A landscape painting in the style of ink wash painting", lines=2)
+                i_neg = gr.Textbox(label="负向提示词（可空）", value="")
+                i_init = gr.Image(label="参考图（必传）", type="pil")
+                i_strength = gr.Slider(0.1, 1.0, value=0.75, step=0.05, label="改动强度 Strength")
+                i_steps = gr.Slider(10, 100, value=50, step=1, label="扩散步数 Steps")
+                i_scale = gr.Slider(1.0, 20.0, value=9.0, step=0.5, label="提示词服从度 CFG Scale")
+                i_seed = gr.Number(value=-1, label="随机种子（-1 为随机）")
+                i_btn = gr.Button("生成", variant="primary")
+            i_out = gr.Image(label="生成结果")
+        i_btn.click(img2img_fn, [i_prompt, i_neg, i_init, i_steps, i_scale, i_strength, i_seed], i_out)
+
+demo.queue()
+demo.launch(server_name="0.0.0.0", server_port=PORT, share=SHARE)

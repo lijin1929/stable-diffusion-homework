@@ -7,6 +7,8 @@
 | 文件 | 说明 |
 |------|------|
 | `StableDiffusion文生图模型实操作业报告.docx` | 完整作业报告：任务 1 环境搭建与模型配置、任务 2 命令行生成图像、任务 3 问题总结与反思 |
+| `app.py` | Stable Diffusion Web 界面（Gradio）：文生图 / 图生图双标签页，`python app.py` 启动 |
+| `部署指南-课程算力平台.md` | 在 Linux GPU 实例上从零部署到 Web 界面测试的完整指南（含国内镜像加速与常见问题） |
 | `batch_txt2img.sh` | 批量生成"同主题、不同参数（CFG × 扩散步数）"图像的脚本，共 8 组对比实验 |
 | `generated-images/` | 生成效果示例图（水墨画风格风景画） |
 
