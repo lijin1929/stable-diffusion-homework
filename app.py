@@ -32,11 +32,20 @@ print(f"[app] 加载模型 {MODEL_DIR}（设备: {DEVICE}）...")
 
 
 def _load_pipeline():
-    """优先完整加载；若安全检查器权重命名不兼容（如 fp16 分支），自动跳过安全检查器重试"""
+    """先检测 safety_checker 权重是否存在；缺失时直接跳过加载，避免“先完整加载一遍失败、再从头加载一遍”的双重加载撑爆内存"""
+    sc_dir = os.path.join(MODEL_DIR, "safety_checker")
+    sc_files = ("pytorch_model.bin", "model.safetensors", "model.ckpt.index", "flax_model.msgpack", "tf_model.h5")
+    if not (os.path.isdir(sc_dir) and any(os.path.isfile(os.path.join(sc_dir, f)) for f in sc_files)):
+        print("[app] safety_checker 权重缺失，直接跳过安全检查器加载")
+        return StableDiffusionPipeline.from_pretrained(
+            MODEL_DIR, torch_dtype=DTYPE, safety_checker=None, feature_extractor=None
+        ).to(DEVICE)
     try:
         return StableDiffusionPipeline.from_pretrained(MODEL_DIR, torch_dtype=DTYPE).to(DEVICE)
     except OSError as e:
         print("[app] 完整加载失败，跳过 safety_checker 重试：", e)
+        import gc
+        gc.collect()
         return StableDiffusionPipeline.from_pretrained(
             MODEL_DIR, torch_dtype=DTYPE, safety_checker=None, feature_extractor=None
         ).to(DEVICE)
