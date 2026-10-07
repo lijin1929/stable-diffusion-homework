@@ -19,10 +19,15 @@ SHARE = os.environ.get("SD_SHARE", "1") == "1"
 print(f"[app] 加载模型 {MODEL_DIR}（设备: {DEVICE}）...")
 pipe = StableDiffusionPipeline.from_pretrained(MODEL_DIR, torch_dtype=DTYPE).to(DEVICE)
 
+if DEVICE == "cpu":
+    # CPU 模式：注意力切片可显著降低内存峰值（8GB 内存环境必备）
+    pipe.enable_attention_slicing()
+    print("[app] CPU 模式：已启用 attention slicing")
+
 # 使用 PLMS 采样器，与作业 txt2img.py 的 --plms 参数保持一致
 try:
     from diffusers import PLMSScheduler
-    pipe.scheduler = PLMSScheduler.from_config(pipe.scheduler.config)
+    pipe.scheduler = PLMScheduler.from_config(pipe.scheduler.config)
     print("[app] 已切换采样器: PLMS")
 except Exception as e:
     print("[app] 使用默认采样器（PNDM）:", e)
@@ -43,10 +48,16 @@ def _generator(seed):
     return torch.Generator(device=DEVICE).manual_seed(int(seed))
 
 
-def txt2img_fn(prompt, negative_prompt, steps, scale, seed):
+DEFAULT_RES = 512 if DEVICE == "cuda" else 384
+DEFAULT_STEPS = 50 if DEVICE == "cuda" else 20
+
+
+def txt2img_fn(prompt, negative_prompt, resolution, steps, scale, seed):
     image = pipe(
         prompt=prompt,
         negative_prompt=negative_prompt or None,
+        width=int(resolution),
+        height=int(resolution),
         num_inference_steps=int(steps),
         guidance_scale=float(scale),
         generator=_generator(seed),
@@ -54,9 +65,15 @@ def txt2img_fn(prompt, negative_prompt, steps, scale, seed):
     return image
 
 
-def img2img_fn(prompt, negative_prompt, init_image, steps, scale, strength, seed):
+def img2img_fn(prompt, negative_prompt, init_image, resolution, steps, scale, strength, seed):
     if init_image is None:
         raise gr.Error("请先上传一张参考图（init image）")
+    # CPU/低内存环境：把参考图长边缩放到目标分辨率，避免内存爆掉
+    res = int(resolution)
+    if max(init_image.size) > res:
+        ratio = res / max(init_image.size)
+        init_image = init_image.resize((max(1, round(init_image.width * ratio)),
+                                        max(1, round(init_image.height * ratio))))
     image = img2img_pipe(
         prompt=prompt,
         negative_prompt=negative_prompt or None,
@@ -80,26 +97,28 @@ with gr.Blocks(title="Stable Diffusion Web 界面") as demo:
             with gr.Column():
                 t_prompt = gr.Textbox(label="提示词 Prompt", value="A landscape painting in the style of ink wash painting", lines=2)
                 t_neg = gr.Textbox(label="负向提示词（可空）", value="")
-                t_steps = gr.Slider(10, 100, value=50, step=1, label="扩散步数 Steps")
+                t_res = gr.Slider(256, 512, value=DEFAULT_RES, step=64, label="分辨率（CPU 建议 384）")
+                t_steps = gr.Slider(10, 100, value=DEFAULT_STEPS, step=1, label="扩散步数 Steps")
                 t_scale = gr.Slider(1.0, 20.0, value=9.0, step=0.5, label="提示词服从度 CFG Scale")
                 t_seed = gr.Number(value=-1, label="随机种子（-1 为随机）")
                 t_btn = gr.Button("生成", variant="primary")
             t_out = gr.Image(label="生成结果")
-        t_btn.click(txt2img_fn, [t_prompt, t_neg, t_steps, t_scale, t_seed], t_out)
+        t_btn.click(txt2img_fn, [t_prompt, t_neg, t_res, t_steps, t_scale, t_seed], t_out)
 
     with gr.Tab("图生图 img2img"):
         with gr.Row():
             with gr.Column():
-                i_prompt = gr.Textbox(label="提示词 Prompt", value="A landscape painting in the style of ink wash painting", lines=2)
+                i_prompt = gr.Textbox(label="提示词 Prompt", value="an oil painting style of this landscape", lines=2)
                 i_neg = gr.Textbox(label="负向提示词（可空）", value="")
                 i_init = gr.Image(label="参考图（必传）", type="pil")
+                i_res = gr.Slider(256, 512, value=DEFAULT_RES, step=64, label="分辨率（CPU 建议 384）")
                 i_strength = gr.Slider(0.1, 1.0, value=0.75, step=0.05, label="改动强度 Strength")
-                i_steps = gr.Slider(10, 100, value=50, step=1, label="扩散步数 Steps")
+                i_steps = gr.Slider(10, 100, value=DEFAULT_STEPS, step=1, label="扩散步数 Steps")
                 i_scale = gr.Slider(1.0, 20.0, value=9.0, step=0.5, label="提示词服从度 CFG Scale")
                 i_seed = gr.Number(value=-1, label="随机种子（-1 为随机）")
                 i_btn = gr.Button("生成", variant="primary")
             i_out = gr.Image(label="生成结果")
-        i_btn.click(img2img_fn, [i_prompt, i_neg, i_init, i_steps, i_scale, i_strength, i_seed], i_out)
+        i_btn.click(img2img_fn, [i_prompt, i_neg, i_init, i_res, i_steps, i_scale, i_strength, i_seed], i_out)
 
 demo.queue()
 demo.launch(server_name="0.0.0.0", server_port=PORT, share=SHARE)
