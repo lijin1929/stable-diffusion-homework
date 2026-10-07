@@ -17,7 +17,20 @@ PORT = int(os.environ.get("SD_PORT", "6006"))
 SHARE = os.environ.get("SD_SHARE", "1") == "1"
 
 print(f"[app] 加载模型 {MODEL_DIR}（设备: {DEVICE}）...")
-pipe = StableDiffusionPipeline.from_pretrained(MODEL_DIR, torch_dtype=DTYPE).to(DEVICE)
+
+
+def _load_pipeline():
+    """优先完整加载；若安全检查器权重命名不兼容（如 fp16 分支），自动跳过安全检查器重试"""
+    try:
+        return StableDiffusionPipeline.from_pretrained(MODEL_DIR, torch_dtype=DTYPE).to(DEVICE)
+    except OSError as e:
+        print("[app] 完整加载失败，跳过 safety_checker 重试：", e)
+        return StableDiffusionPipeline.from_pretrained(
+            MODEL_DIR, torch_dtype=DTYPE, safety_checker=None, feature_extractor=None
+        ).to(DEVICE)
+
+
+pipe = _load_pipeline()
 
 if DEVICE == "cpu":
     # CPU 模式：注意力切片可显著降低内存峰值（8GB 内存环境必备）
