@@ -12,7 +12,9 @@ from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
 
 MODEL_DIR = os.environ.get("SD_MODEL_DIR", "webui_model")
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-DTYPE = torch.float16 if DEVICE == "cuda" else torch.float32
+# 统一使用 fp16 半精度：GPU 上更快，CPU 上内存减半（8GB 内存环境必需，fp32 会被 OOM 杀掉）
+# 如需强制 fp32，设置环境变量 SD_CPU_FP32=1（需 16GB 以上内存）
+DTYPE = torch.float32 if (DEVICE == "cpu" and os.environ.get("SD_CPU_FP32", "0") == "1") else torch.float16
 PORT = int(os.environ.get("SD_PORT", "6006"))
 SHARE = os.environ.get("SD_SHARE", "1") == "1"
 
@@ -61,8 +63,8 @@ def _generator(seed):
     return torch.Generator(device=DEVICE).manual_seed(int(seed))
 
 
-DEFAULT_RES = 512 if DEVICE == "cuda" else 384
-DEFAULT_STEPS = 50 if DEVICE == "cuda" else 20
+DEFAULT_RES = 512 if DEVICE == "cuda" else 320
+DEFAULT_STEPS = 50 if DEVICE == "cuda" else 15
 
 
 def txt2img_fn(prompt, negative_prompt, resolution, steps, scale, seed):
